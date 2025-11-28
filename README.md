@@ -39,7 +39,8 @@ npm install
 
 ### 3. Database Setup
 
-Open your MySQL Client (Workbench/Command Line).Run the schema.sql script (not included in repo, ensure you have the schema) to create the battalion_inventory database, tables, views, triggers, and stored procedures.Update db.js with your local MySQL credentials:JavaScript backend/db.js
+Open your MySQL Client (Workbench/Command Line).Run the schema.sql script (not included in repo, ensure you have the schema) to create the battalion_inventory database, tables, views, triggers, and stored procedures.
+Update db.js with your local MySQL credentials:JavaScript backend/db.js
 const pool = mysql.createPool({
     host: 'localhost',
     user: 'root', // Your User
@@ -76,29 +77,32 @@ Ration Incharge                 ri.alpha                /ration
 Soldier                         soldier107              /soldier
 
 
-### 📂 Project StructureArmouryNet/
-├── backend/
-│   ├── app.js              # Main server entry point
-│   ├── db.js               # Database connection pool
-│   └── routes/             # (Optional: Modular routes)
+### 📂 Project Structure
+```Bash
+ArmouryNet/
 ├── Public/
 │   ├── css/
-│   │   └── style.css       # Main stylesheet
-│   └── images/             # Static assets
+│   │   └── style.css            # Main stylesheet
+│   └── images/                  # Static assets
+│
 ├── Views/
-│   ├── home.ejs            # Landing page
-│   ├── login.ejs           # Login page
-│   ├── co.ejs              # CO Dashboard
-│   ├── qm.ejs              # Quartermaster Dashboard
-│   ├── mto.ejs             # MTO Dashboard
-│   ├── adjutant.ejs        # Adjutant Dashboard
-│   ├── kote.ejs            # Company Weapon Dashboard
-│   ├── ration.ejs          # Company Ration Dashboard
-│   └── soldier.ejs         # Soldier Dashboard
-├── hashPasswords.js        # Utility script for password security
+│   ├── home.ejs                 # Landing page
+│   ├── login.ejs                # Login page
+│   ├── co.ejs                   # CO Dashboard
+│   ├── qm.ejs                   # Quartermaster Dashboard
+│   ├── mto.ejs                  # MTO Dashboard
+│   ├── adjutant.ejs             # Adjutant Dashboard
+│   ├── kote.ejs                 # Company Weapon Dashboard
+│   ├── ration.ejs               # Company Ration Dashboard
+│   └── soldier.ejs              # Soldier Dashboard
+│
+├── hashPasswords.js             # Utility script for hashing passwords
+├── app.js                       # Main server entry point
+├── db.js                        # Database connection pool
 ├── .gitignore
 ├── package.json
-└── README.md
+└── README
+```
 
 ### Next Steps
 

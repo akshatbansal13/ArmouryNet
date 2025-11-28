@@ -314,6 +314,10 @@ window.addEventListener("load", () => {
 
 // --- NEW JAVASCRIPT for CC Personnel Search ---
 
+// Store the current company ID (passed from app.js) for use in APIs
+// We need to make sure 'companyId' is passed in the res.render for this to work
+const currentCompanyId = "<%= (typeof companyId !== 'undefined') ? companyId : user.company_id %>";
+
 // 1. Get references to the elements
 const ccPersonnelSearch = document.getElementById('cc-personnel-search');
 const ccPersonnelTableBody = document.getElementById('cc-personnel-table-body');
@@ -328,7 +332,7 @@ if (ccPersonnelSearch) {
 // 3. This function calls your new API
 async function fetchCompanyPersonnel(searchTerm) {
     try {
-        const response = await fetch(`/api/cc-search-personnel?term=${searchTerm}`);
+        const response = await fetch(`/api/cc-search-personnel?term=${searchTerm}&company_id=${currentCompanyId}`);
         if (!response.ok) {
             throw new Error('Network response was not ok');
         }
@@ -379,7 +383,7 @@ if (ccWeaponSearch) {
 // 3. This function calls your new API
 async function fetchCompanyWeapons(searchTerm) {
     try {
-        const response = await fetch(`/api/cc-search-weapons?term=${searchTerm}`);
+        const response = await fetch(`/api/cc-search-weapons?term=${searchTerm}&company_id=${currentCompanyId}`);
         if (!response.ok) {
             throw new Error('Network response was not ok');
         }

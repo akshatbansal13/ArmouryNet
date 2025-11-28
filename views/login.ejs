@@ -12,11 +12,17 @@
 
     <div class="login-box">
       <img src="loginImage.jpg" alt="Indian Army Logo" class="army-logo">
-      <% if (error) { %>
-        <div class="error-alert">
-            <strong>Error:</strong> <%= error %>
+      <% if (success) { %>
+        <div style="background: rgba(40, 167, 69, 0.2); border: 1px solid #28a745; color: #fff; padding: 12px; border-radius: 8px; margin-bottom: 20px; text-align: center; font-weight: bold;">
+            <%= success %>
         </div>
-    <% } %>
+      <% } %>
+
+      <% if (error) { %>
+        <div style="background: rgba(220, 53, 69, 0.2); border: 1px solid #dc3545; color: #fff; padding: 12px; border-radius: 8px; margin-bottom: 20px; text-align: center; font-weight: bold;">
+            <%= error %>
+        </div>
+      <% } %>
       <h2>ARMOURYNET</h2>
       <p class="subtitle">Enter your credentials to access the system</p>
 
@@ -27,14 +33,11 @@
         <label for="password">PASSWORD</label>
         <input type="password" id="password" name="password" placeholder="Enter your password" required>
 
-        <div class="remember">
-          <input type="checkbox" id="remember">
-          <label for="remember">Remember me on this device</label>
-        </div>
-
         <button type="submit" class="login-btn">LOGIN TO SYSTEM</button>
 
-        <a href="#" class="forgot">Forgot your password?</a>
+      <div style="margin-top: 15px; text-align: center;">
+        <a href="/forgot-password" style="color: #aaa; text-decoration: none; font-size: 0.9rem;">Forgot Password?</a>
+      </div>
       </form>
     </div>
   </div>

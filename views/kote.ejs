@@ -310,6 +310,7 @@
         <p style="margin-bottom: 20px;">Updating: <strong id="maint-weapon-name"></strong></p>
         
         <form id="edit-maint-form" method="POST">
+            <input type="hidden" name="redirect_company_id" value="<%= viewedCompanyId %>">
             <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
                 <div class="form-group">
                     <label for="edit-last-maint">Last Maintenance</label>
@@ -339,6 +340,7 @@
       <h2>Issue / Return Weapon</h2>
       <p>Physically allocate a weapon to a soldier or return it to the kote. This calls `sp_AllocateWeaponToSoldier`.</p>
       <form action="/kote/allocate" method="POST" style="margin-top: 20px;">
+        <input type="hidden" name="redirect_company_id" value="<%= viewedCompanyId %>">
           <div class="form-grid">
             <div class="form-group">
               <label for="weapon-id-issue">Select Weapon (In-Store)</label>
@@ -365,6 +367,7 @@
     <h3 style="color: #4a6981; margin-top: 30px; margin-bottom: 20px;">Return Weapon</h3>
     <p>Return a physically issued weapon to the kote.</p>
     <form action="/kote/return" method="POST" style="margin-top: 20px;">
+        <input type="hidden" name="redirect_company_id" value="<%= viewedCompanyId %>">
         <div class="form-grid">
           <div class="form-group">
             <label for="weapon-id-return">Select Weapon (Currently Issued)</label>
@@ -389,6 +392,7 @@
     <p>Create the permanent link between a soldier and a weapon.</p>
     
     <form action="/kote/assign" method="POST" style="margin-top: 20px;">
+        <input type="hidden" name="redirect_company_id" value="<%= viewedCompanyId %>">
         <div class="form-grid">
             <div class="form-group">
                 <label for="weapon-id-assign">Select Weapon (Unassigned)</label>
@@ -495,6 +499,7 @@
     <h3 style="color: #4a6981;margin-bottom: 20px;">Issue Ammunition (from Central Store)</h3>
     <p style="margin-bottom: 20px;">Issue ammo from the battalion's central stock to a soldier.</p>
     <form action="/kote/issue-ammo" method="POST">
+        <input type="hidden" name="redirect_company_id" value="<%= viewedCompanyId %>">
     <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
         <div class="form-group">
             <label for="ammo_id">Select Ammo Batch (Battalion Stock)</label>
@@ -538,6 +543,7 @@
     <h3 style="color: #4a6981;margin-bottom: 20px;">Return Ammunition (to Central Store)</h3>
     <p style="margin-bottom: 20px;">Return unused ammo from a soldier to the battalion's stock.</p>
     <form action="/kote/return-ammo" method="POST">
+        <input type="hidden" name="redirect_company_id" value="<%= viewedCompanyId %>">
         <div class="form-grid" style="grid-template-columns: 1fr 1fr 1fr 1fr;">
             <div class="form-group">
                 <label for="soldier-id-return">Select Soldier (Your Company)</label>
@@ -686,6 +692,10 @@
         if (element) { element.classList.add('active'); }
     }
 
+    // Store the current company ID (passed from app.js) for use in APIs
+    // We need to make sure 'companyId' is passed in the res.render for this to work
+    const currentCompanyId = "<%= (typeof companyId !== 'undefined') ? companyId : user.company_id %>";
+
     // --- Maintenance Modal Functions ---
     async function editWeaponMaintenance(weaponId) {
         try {
@@ -712,7 +722,7 @@
     // --- Kote Search Functions ---
     async function fetchCompanyWeapons(searchTerm) {
         try {
-            const response = await fetch(`/api/cc-search-weapons?term=${searchTerm}`);
+            const response = await fetch(`/api/cc-search-weapons?term=${searchTerm}&company_id=${currentCompanyId}`);
             if (!response.ok) throw new Error('Network response was not ok');
             const weapons = await response.json();
             updateCompanyWeaponTable(weapons);
@@ -747,7 +757,7 @@
     async function fetchOverviewWeapons(searchTerm) {
     try {
         // We reuse the existing API route
-        const response = await fetch(`/api/cc-search-weapons?term=${searchTerm}`);
+        const response = await fetch(`/api/cc-search-weapons?term=${searchTerm}&company_id=${currentCompanyId}`);
         if (!response.ok) throw new Error('Network response was not ok');
         const weapons = await response.json();
         updateOverviewWeaponTable(weapons);
@@ -791,7 +801,7 @@ function updateOverviewWeaponTable(weapons) {
 // --- (NEW) Weapon Ledger Search Functions ---
 async function fetchWeaponLedger(searchTerm) {
     try {
-        const response = await fetch(`/api/kote/search-weapon-ledger?term=${searchTerm}`);
+        const response = await fetch(`/api/kote/search-weapon-ledger?term=${searchTerm}&company_id=${currentCompanyId}`);
         if (!response.ok) throw new Error('Network response was not ok');
         const ledger = await response.json();
         updateWeaponLedgerTable(ledger);
@@ -823,7 +833,7 @@ function updateWeaponLedgerTable(ledger) {
 // --- (NEW) Ammo Log Search Functions ---
 async function fetchAmmoLog(searchTerm) {
     try {
-        const response = await fetch(`/api/kote/search-ammo-log?term=${searchTerm}`);
+        const response = await fetch(`/api/kote/search-ammo-log?term=${searchTerm}&company_id=${currentCompanyId}`);
         if (!response.ok) throw new Error('Network response was not ok');
         const ammoLog = await response.json();
         updateAmmoLogTable(ammoLog);
@@ -856,7 +866,7 @@ function updateAmmoLogTable(ammoLog) {
 // --- (NEW) Assignment Search Functions ---
 async function fetchAssignments(searchTerm) {
     try {
-        const response = await fetch(`/api/kote/search-assignments?term=${searchTerm}`);
+        const response = await fetch(`/api/kote/search-assignments?term=${searchTerm}&company_id=${currentCompanyId}`);
         if (!response.ok) throw new Error('Network response was not ok');
         const assignments = await response.json();
         updateAssignmentsTable(assignments);

@@ -610,7 +610,7 @@ function updateFuelLogTable(logs) {
 
     // --- Assign Driver Modal Functions ---
     function assignDriver(mt_id, currentDriverName) {
-        assignDriverForm.action = `/qm/update-vehicle/${mt_id}`;
+        assignDriverForm.action = `/mto/assign-driver/${mt_id}`;
         driverSelect.value = ""; // Default to 'Unassign'
         assignDriverModal.style.display = 'flex';
     }

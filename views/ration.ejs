@@ -207,6 +207,7 @@
       <h2>Issue Rations (Consumption)</h2>
       <p>Issue rations for daily consumption (Cookhouse).</p>
       <form action="/ration/consume" method="POST">
+        <input type="hidden" name="redirect_company_id" value="<%= viewedCompanyId %>">
     <div class="form-grid">
         <div class="form-group">
             <label for="ration_id">Select Item</label>
@@ -302,6 +303,7 @@
         <h2 style="color: #c87941; margin-bottom: 20px;">Return Stock to QM</h2>
         
         <form action="/ration/revert" method="POST">
+          <input type="hidden" name="redirect_company_id" value="<%= viewedCompanyId %>">
             <input type="hidden" id="return-ration-id" name="ration_id">
             
             <div class="form-group" style="margin-bottom: 15px;">
@@ -388,6 +390,10 @@
 </footer>
 
 <script>
+    // Store the current company ID (passed from app.js) for use in APIs
+    // We need to make sure 'companyId' is passed in the res.render for this to work
+    const currentCompanyId = "<%= (typeof companyId !== 'undefined') ? companyId : user.company_id %>";
+
     // 1. Navigation Logic
     function showSection(sectionId, element) {
         document.querySelectorAll('.module-section').forEach(sec => sec.style.display='none');
@@ -418,7 +424,7 @@
         reportOutput.innerHTML = '<p>Generating...</p>';
         
         try {
-            const response = await fetch(`/api/ration-report?type=${type}`);
+            const response = await fetch(`/api/ration-report?type=${type}&company_id=${currentCompanyId}`);
             const result = await response.json();
             
             let html = `<h3>${type === 'stock' ? 'Current Stock Report' : 'Transaction Ledger'}</h3>`;

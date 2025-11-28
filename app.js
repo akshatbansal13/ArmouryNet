@@ -86,10 +86,13 @@ app.get("/about", function(req, res) {
 });
 
 // Serves the login page
+// Serves the login page
 app.get("/login", function(req, res) {
-    res.render("login", { error: req.query.error || null }); 
+    res.render("login", { 
+        error: req.query.error || null,   
+        success: req.query.success || null  
+    }); 
 });
-
 // ===================================
 //  AUTHENTICATION ROUTES
 // ===================================
@@ -155,7 +158,6 @@ app.post("/login", async function(req, res) {
             case 'Soldier': res.redirect('/soldier'); break;
             case 'MT_JCO':
             case 'MTO': res.redirect('/mto'); break;
-            case 'Fuel_NCO':
             case 'Company_Weapon_Incharge':
                 res.redirect('/kote'); break;
             case 'Battalion_Ammo_Incharge':
@@ -182,7 +184,46 @@ app.get("/logout", (req, res) => {
         res.redirect("/login");
     });
 });
+// GET: Show the form
+app.get('/forgot-password', (req, res) => {
+    res.render('forgot-password', { error: null });
+});
 
+// POST: Handle the logic
+app.post('/forgot-password', async (req, res) => {
+    const { soldier_id, rank, dob, new_password } = req.body;
+
+    try {
+        // 1. Check if a soldier matches ALL these details
+        // We format the DOB in SQL to match the input string format (YYYY-MM-DD)
+        const [rows] = await pool.execute(
+            "SELECT soldier_id FROM Soldiers WHERE soldier_id = ? AND `rank` = ? AND dob = ?",
+            [soldier_id, rank, dob]
+        );
+
+        if (rows.length === 0) {
+            // No match found
+            return res.render('forgot-password', { error: 'Verification failed. Details do not match our records.' });
+        }
+
+        // 2. Soldier found! Hash the new password
+        const hashedPassword = await bcrypt.hash(new_password, 10);
+
+        // 3. Update the Users table
+        // Note: This assumes a User entry already exists for this soldier.
+        await pool.execute(
+            'UPDATE Users SET password_hash = ? WHERE soldier_id = ?',
+            [hashedPassword, soldier_id]
+        );
+
+        // 4. Success! Redirect to login
+        res.redirect('/login?success=Password reset successfully. Please login.');
+
+    } catch (error) {
+        console.error("Reset Password Error:", error);
+        res.render('forgot-password', { error: 'Server error during verification.' });
+    }
+});
 
 // ===================================
 //  PROTECTED DASHBOARD ROUTES
@@ -247,6 +288,27 @@ app.get("/co", checkAuth, setNoCache, checkRole(['CO']), async function(req, res
             GROUP BY c.company_id, c.company_name
         `);
 
+        // 10. List of all Companies (for dropdowns, etc.)
+            const [allCompanies] = await pool.query("SELECT company_id, company_name FROM Companies");
+
+        const [approvalQueue] = await pool.query(`
+            SELECT 
+                lr.leave_id, 
+                s.name, 
+                s.rank, 
+                c.company_name, 
+                lr.leave_type, 
+                DATE_FORMAT(lr.start_date, '%d-%m-%Y') as start,
+                DATE_FORMAT(lr.end_date, '%d-%m-%Y') as end,
+                lr.reason
+            FROM Leave_Records lr
+            JOIN Soldiers s ON lr.soldier_id = s.soldier_id
+            JOIN Companies c ON s.company_id = c.company_id
+            WHERE lr.status = 'Pending'
+            ORDER BY lr.start_date ASC
+            LIMIT 10
+        `);
+
         res.render("co", {
             user: req.session.user,
             stats: {
@@ -260,6 +322,8 @@ app.get("/co", checkAuth, setNoCache, checkRole(['CO']), async function(req, res
             alerts: allAlerts,
             companyStrength: companyStrength,
             readiness: readiness,
+            allCompanies: allCompanies,
+            approvalQueue: approvalQueue,
             error: req.query.error || null,
             success: req.query.success || null
         });
@@ -269,6 +333,163 @@ app.get("/co", checkAuth, setNoCache, checkRole(['CO']), async function(req, res
         res.status(500).send("Server Error");
     }
 });
+// API: Get list of all system users
+app.get('/api/admin/users', checkAuth, checkRole(['CO']), async (req, res) => {
+    try {
+        const searchTerm = req.query.term || '';
+        const searchPattern = `%${searchTerm}%`;
+
+        const [users] = await pool.execute(
+            `SELECT u.user_id, u.username, u.role, s.name, s.\`rank\` 
+             FROM Users u 
+             JOIN Soldiers s ON u.soldier_id = s.soldier_id
+             WHERE u.username LIKE ? OR s.name LIKE ? OR u.role LIKE ?
+             ORDER BY u.role, s.name`,
+            [searchPattern, searchPattern, searchPattern]
+        );
+        res.json(users);
+    } catch (error) {
+        console.error("Admin User Search Error:", error);
+        res.status(500).json({ message: "Server error" });
+    }
+});
+
+// POST: Reset a user's password to default ('pass123')
+app.post('/admin/reset-password/:user_id', checkAuth, checkRole(['CO']), async (req, res) => {
+    const { user_id } = req.params;
+    
+    // Hash for 'pass123' (You can generate a fresh one or use a constant)
+    // For simplicity in this demo, we use a known hash for 'pass123'
+    // In production, generate this dynamically using bcrypt.hash('pass123', 10)
+    const defaultHash = '$2b$10$YourKnownHashStringHere...'; // Replace if you have the specific string, or let's compute it live:
+    
+    try {
+        const hash = await bcrypt.hash('pass123', 10); // Live generation
+        
+        await pool.execute(
+            'UPDATE Users SET password_hash = ? WHERE user_id = ?',
+            [hash, user_id]
+        );
+        res.redirect('/co?success=User password reset to default (pass123).');
+    } catch (error) {
+        console.error("Password Reset Error:", error);
+        res.redirect('/co?error=Could not reset password.');
+    }
+});
+// 1. API: Get list of soldiers who DO NOT have a user account yet
+app.get('/api/admin/unregistered-soldiers', checkAuth, checkRole(['CO']), async (req, res) => {
+    try {
+        const [soldiers] = await pool.query(
+            `SELECT soldier_id, name, \`rank\` 
+             FROM Soldiers 
+             WHERE soldier_id NOT IN (SELECT soldier_id FROM Users)
+             AND \`status\` = 'Active'`
+        );
+        res.json(soldiers);
+    } catch (error) {
+        console.error("Error fetching unregistered soldiers:", error);
+        res.status(500).json({ message: "Server error" });
+    }
+});
+
+// 2. API: Get single user details for editing
+app.get('/api/admin/user/:id', checkAuth, checkRole(['CO']), async (req, res) => {
+    try {
+        const { id } = req.params;
+        const [rows] = await pool.execute('SELECT user_id, username, role FROM Users WHERE user_id = ?', [id]);
+        if (rows.length === 0) return res.status(404).json({ message: 'User not found' });
+        res.json(rows[0]);
+    } catch (error) {
+        res.status(500).json({ message: "Server error" });
+    }
+});
+
+// 3. POST: Add a new user
+app.post('/admin/add-user', checkAuth, checkRole(['CO']), async (req, res) => {
+    const { soldier_id, username, password, role } = req.body;
+    
+    try {
+        const hashedPassword = await bcrypt.hash(password, 10);
+        
+        await pool.execute(
+            'INSERT INTO Users (soldier_id, username, password_hash, role) VALUES (?, ?, ?, ?)',
+            [soldier_id, username, hashedPassword, role]
+        );
+        res.redirect('/co?success=User account created successfully!');
+    } catch (error) {
+        console.error("Error adding user:", error);
+        res.redirect('/co?error=' + encodeURIComponent(error.sqlMessage || error.message));
+    }
+});
+
+// 4. POST: Update a user (Role/Username)
+app.post('/admin/update-user/:id', checkAuth, checkRole(['CO']), async (req, res) => {
+    const { id } = req.params;
+    const { username, role } = req.body;
+
+    try {
+        await pool.execute(
+            'UPDATE Users SET username = ?, role = ? WHERE user_id = ?',
+            [username, role, id]
+        );
+        res.redirect('/co?success=User updated successfully!');
+    } catch (error) {
+        console.error("Error updating user:", error);
+        res.redirect('/co?error=' + encodeURIComponent(error.sqlMessage || error.message));
+    }
+});
+
+// 5. GET: Delete a user
+app.get('/admin/delete-user/:id', checkAuth, checkRole(['CO']), async (req, res) => {
+    const { id } = req.params;
+    // Prevent CO from deleting themselves
+    if (id == req.session.user.user_id) { // Assuming user_id is in session, or check username
+         return res.redirect('/co?error=You cannot delete your own account.');
+    }
+
+    try {
+        await pool.execute('DELETE FROM Users WHERE user_id = ?', [id]);
+        res.redirect('/co?success=User access revoked.');
+    } catch (error) {
+        res.redirect('/co?error=Could not delete user.');
+    }
+});
+// POST /admin/run-daily-checks - Manually triggers the daily maintenance procedure
+app.post('/admin/run-daily-checks', checkAuth, checkRole(['CO']), async (req, res) => {
+    try {
+        // Call the stored procedure we created earlier
+        await pool.execute('CALL sp_RunDailyChecks()');
+        
+        res.redirect('/co?success=Daily diagnostics run successfully. Alerts have been updated.');
+    } catch (error) {
+        console.error("Error running daily checks:", error);
+        res.redirect('/co?error=' + encodeURIComponent(error.sqlMessage || 'Server error during diagnostics.'));
+    }
+});
+// POST /admin/reset-yearly-leaves - Manually triggers the yearly reset
+app.post('/admin/reset-yearly-leaves', checkAuth, checkRole(['CO']), async (req, res) => {
+    try {
+        await pool.execute('CALL sp_ResetYearlyLeaves()');
+        res.redirect('/co?success=Yearly leave quotas have been reset for all soldiers.');
+    } catch (error) {
+        console.error("Error resetting leaves:", error);
+        res.redirect('/co?error=' + encodeURIComponent(error.sqlMessage || 'Server error.'));
+    }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -638,6 +859,13 @@ app.post('/personnel/update/:id', checkAuth, checkRole(['Adjutant', 'CO']), asyn
 
 
 
+
+
+
+
+
+
+
 // MTO Dashboard Route
 app.get("/mto", checkAuth, setNoCache, checkRole(['MTO', 'MT_JCO', 'CO']), async (req, res) => {
     
@@ -963,6 +1191,33 @@ app.get('/api/mto-report', checkAuth, checkRole(['MTO', 'MT_JCO', 'CO']), async 
         res.status(500).json({ message: "Server error" });
     }
 });
+// POST /mto/assign-driver/:id - Specific route for assigning/unassigning drivers
+app.post('/mto/assign-driver/:id', checkAuth, checkRole(['MTO', 'MT_JCO', 'CO']), async (req, res) => {
+    const { id } = req.params;
+    const { driver_id } = req.body; // This form only sends driver_id
+
+    try {
+        // Only update the driver_id column
+        await pool.execute(
+            'UPDATE Military_Transport SET driver_id = ? WHERE mt_id = ?',
+            [driver_id || null, id] // Handle empty string as NULL
+        );
+        
+        // Redirect back to the MTO dashboard
+        res.redirect('/mto?success=Driver assignment updated successfully!');
+
+    } catch (error) {
+        console.error("Error assigning driver:", error);
+        res.redirect('/mto?error=' + encodeURIComponent(error.sqlMessage || 'Server Error'));
+    }
+});
+
+
+
+
+
+
+
 
 
 
@@ -1601,7 +1856,7 @@ app.post('/qm/add-vehicle', checkAuth, checkRole(['QM', 'CO']), async (req, res)
 // defined above in the MTO section
 
 // POST /qm/update-vehicle/:id - Updates a specific vehicle
-app.post('/qm/update-vehicle/:id', checkAuth, checkRole(['QM', 'CO', 'MTO']), async (req, res) => {
+app.post('/qm/update-vehicle/:id', checkAuth, checkRole(['QM', 'CO']), async (req, res) => {
     const { id } = req.params;
     const { vehicle_number, type, model, driver_id, status, last_maintenance, next_maintenance } = req.body;
 
@@ -1781,8 +2036,16 @@ app.get('/alert/resolve/:id', checkAuth, async (req, res) => {
 app.get("/cc-dashboard", checkAuth, checkRole(['CompanyCommander', 'CO']), setNoCache, async (req, res) => {
     
     try {
-        // 1. Get the CC's company ID from their session
-        const companyId = req.session.user.company_id;
+
+        
+
+        // --- OVERRIDE LOGIC ---
+        let companyId = req.session.user.company_id; // Default to user's own company
+        // If User is CO AND a specific company is requested in URL, override it
+        if (req.session.user.role === 'CO' && req.query.company_id) {
+            companyId = req.query.company_id;
+        }
+        // ---------------------
 
         // 2. Fetch all data *filtered by their company_id*
         const [personnel] = await pool.query(
@@ -1824,6 +2087,7 @@ app.get("/cc-dashboard", checkAuth, checkRole(['CompanyCommander', 'CO']), setNo
         // 4. Render the page with the filtered data
         res.render("cc-dashboard", { // Make sure your file is named cc-dashboard.ejs
             user: req.session.user,
+            viewedCompanyId: companyId,
             companyName: company[0].company_name,
             stats: stats,
             personnel: personnel,
@@ -1842,11 +2106,17 @@ app.get("/cc-dashboard", checkAuth, checkRole(['CompanyCommander', 'CO']), setNo
 
 app.get('/api/cc-search-personnel', checkAuth, checkRole(['CompanyCommander', 'CO']), async (req, res) => {
     try {
+        // --- OVERRIDE LOGIC ---
+        let companyId = req.session.user.company_id; // Default to user's own company
+        // If User is CO AND a specific company is requested in URL, override it
+        if (req.session.user.role === 'CO' && req.query.company_id) {
+            companyId = req.query.company_id;
+        }       
+        // ---------------------
+
         const searchTerm = req.query.term || '';
         const searchPattern = `%${searchTerm}%`;
         
-        // Get the commander's company ID from their session
-        const companyId = req.session.user.company_id;
 
         const [rows] = await pool.execute(
     `SELECT soldier_id, name, \`rank\`, \`status\`
@@ -1868,9 +2138,18 @@ app.get('/api/cc-search-personnel', checkAuth, checkRole(['CompanyCommander', 'C
 // --- ADD THIS NEW API ROUTE for Company Kote Search ---
 app.get('/api/cc-search-weapons', checkAuth, checkRole(['CompanyCommander', 'CO','Company_Weapon_Incharge']), async (req, res) => {
     try {
+
+        // --- OVERRIDE LOGIC ---
+        let companyId = req.session.user.company_id; // Default to user's own company
+        // If User is CO AND a specific company is requested in URL, override it
+        if (req.session.user.role === 'CO' && req.query.company_id) {
+            companyId = req.query.company_id;
+        }       
+        // ---------------------
+
         const searchTerm = req.query.term || '';
         const searchPattern = `%${searchTerm}%`;
-        const companyId = req.session.user.company_id;
+        
 
         const [rows] = await pool.execute(
             `SELECT w.weapon_id, w.serial_number, w.\`type\`, w.model, s.name AS assigned_to, w.\`status\`
@@ -1937,7 +2216,13 @@ app.get('/api/cc-search-weapons', checkAuth, checkRole(['CompanyCommander', 'CO'
 // --- RATION INCHARGE DASHBOARD ROUTE ---
 app.get("/ration", checkAuth, checkRole(['Company_Ration_Incharge', 'CO']), setNoCache, async (req, res) => {
     try {
-        const companyId = req.session.user.company_id;
+        // --- OVERRIDE LOGIC ---
+        let companyId = req.session.user.company_id; // Default to user's own company
+        // If User is CO AND a specific company is requested in URL, override it
+        if (req.session.user.role === 'CO' && req.query.company_id) {
+            companyId = req.query.company_id;
+        }       
+        // ---------------------
         const [company] = await pool.query("SELECT company_name FROM Companies WHERE company_id = ?", [companyId]);
         
         // 1. Get Rations for THIS company
@@ -1978,6 +2263,7 @@ app.get("/ration", checkAuth, checkRole(['Company_Ration_Incharge', 'CO']), setN
         res.render("ration", { // Make sure your file is named ration.ejs
             user: req.session.user,
             companyName: company[0].company_name,
+            viewedCompanyId: companyId,
             rations: rations,
             alerts: alerts,
             stats: stats,
@@ -1995,13 +2281,24 @@ app.get("/ration", checkAuth, checkRole(['Company_Ration_Incharge', 'CO']), setN
 // POST /ration/consume - Logs consumption OR spoilage
 app.post('/ration/consume', checkAuth, checkRole(['Company_Ration_Incharge', 'CO']), async (req, res) => {
     // 1. Get transaction_type from the form
-    const { ration_id, quantity, remarks, transaction_type } = req.body;
+    const { ration_id, quantity, remarks, transaction_type, redirect_company_id } = req.body;
     
     const qtyToConsume = parseFloat(quantity);
     const userId = req.session.user.id;
-    const companyId = req.session.user.company_id;
 
-    if (qtyToConsume <= 0) return res.redirect('/ration?error=Quantity must be positive.');
+    // --- Logic to determine Target Company & Redirect URL ---
+    let targetCompanyId = req.session.user.company_id;
+    let redirectUrl = '/ration';
+
+    if (req.session.user.role === 'CO' && redirect_company_id) {
+        redirectUrl += `?company_id=${redirect_company_id}`;
+        targetCompanyId = redirect_company_id; // Log this under the target company
+    }
+    const separator = redirectUrl.includes('?') ? '&' : '?';
+    // -------------------------------------------------------
+
+
+    if (qtyToConsume <= 0) return res.redirect(`${redirectUrl}${separator}error=Quantity must be positive.`);
 
     let connection;
     try {
@@ -2012,7 +2309,7 @@ app.post('/ration/consume', checkAuth, checkRole(['Company_Ration_Incharge', 'CO
         const [rows] = await connection.execute('SELECT quantity_kg, item_name FROM Rations WHERE ration_id = ? FOR UPDATE', [ration_id]);
         if (rows.length === 0 || rows[0].quantity_kg < qtyToConsume) {
             await connection.rollback();
-            return res.redirect('/ration?error=Not enough stock available.');
+            return res.redirect(`${redirectUrl}${separator}error=Not enough stock available.`);
         }
 
         // 3. Subtract the quantity (applies to both Consumption and Spoilage)
@@ -2025,27 +2322,37 @@ app.post('/ration/consume', checkAuth, checkRole(['Company_Ration_Incharge', 'CO
         await connection.execute(
             `INSERT INTO Ration_Log (ration_id, company_id, transaction_type, quantity_change, performed_by_id, remarks)
              VALUES (?, ?, ?, ?, ?, ?)`,
-            [ration_id, companyId, transaction_type, -qtyToConsume, userId, remarks || transaction_type]
+            [ration_id, targetCompanyId, transaction_type, -qtyToConsume, userId, remarks || transaction_type]
         );
 
         await connection.commit();
-        res.redirect('/ration?success=Transaction logged successfully!');
+            res.redirect(`${redirectUrl}${separator}success=Transaction logged successfully!`);
     } catch (error) {
         if (connection) await connection.rollback();
         console.error("Error consuming rations:", error);
-        res.redirect('/ration?error=Server Error');
+        res.redirect(`${redirectUrl}${separator}error=Server Error`);
     } finally {
         if (connection) connection.release();
     }
 });
 // POST /ration/revert - Returns stock from Company to Battalion
 app.post('/ration/revert', checkAuth, checkRole(['Company_Ration_Incharge', 'CO']), async (req, res) => {
-    const { ration_id, quantity, remarks } = req.body;
+    const { ration_id, quantity, remarks, redirect_company_id } = req.body;
     const qtyToReturn = parseFloat(quantity);
     const userId = req.session.user.id;
-    const companyId = req.session.user.company_id;
+    // --- Logic to determine Target Company & Redirect URL ---
+    let targetCompanyId = req.session.user.company_id;
+    let redirectUrl = '/ration';
 
-    if (qtyToReturn <= 0) return res.redirect('/ration?error=Quantity must be positive.');
+    if (req.session.user.role === 'CO' && redirect_company_id) {
+        redirectUrl += `?company_id=${redirect_company_id}`;
+        targetCompanyId = redirect_company_id; // Log this under the target company
+    }
+    const separator = redirectUrl.includes('?') ? '&' : '?';
+    // -------------------------------------------------------
+
+
+    if (qtyToReturn <= 0) return res.redirect(`${redirectUrl}${separator}error=Quantity must be positive.`);
 
     let connection;
     try {
@@ -2060,7 +2367,7 @@ app.post('/ration/revert', checkAuth, checkRole(['Company_Ration_Incharge', 'CO'
 
         if (rationRows.length === 0 || rationRows[0].quantity_kg < qtyToReturn) {
             await connection.rollback();
-            return res.redirect('/ration?error=Not enough stock to return.');
+                return res.redirect(`${redirectUrl}${separator}error=Not enough stock to return.`);
         }
 
         const item = rationRows[0];
@@ -2084,16 +2391,15 @@ app.post('/ration/revert', checkAuth, checkRole(['Company_Ration_Incharge', 'CO'
         await connection.execute(
             `INSERT INTO Ration_Log (ration_id, company_id, transaction_type, quantity_change, performed_by_id, remarks)
              VALUES (?, ?, 'Returned_to_QM', ?, ?, ?)`,
-            [ration_id, companyId, -qtyToReturn, userId, remarks || 'Returned to Battalion Store']
+            [ration_id, targetCompanyId, -qtyToReturn, userId, remarks || 'Returned to Battalion Store']
         );
 
         await connection.commit();
-        res.redirect('/ration?success=Stock returned to QM successfully!');
-
+        res.redirect(`${redirectUrl}${separator}success=Stock returned to QM successfully!`);
     } catch (error) {
         if (connection) await connection.rollback();
         console.error("Error reverting rations:", error);
-        res.redirect('/ration?error=Server Error');
+        res.redirect(`${redirectUrl}${separator}error=Server Error`);
     } finally {
         if (connection) connection.release();
     }
@@ -2102,7 +2408,13 @@ app.post('/ration/revert', checkAuth, checkRole(['Company_Ration_Incharge', 'CO'
 app.get('/api/ration-report', checkAuth, checkRole(['Company_Ration_Incharge', 'CO']), async (req, res) => {
     try {
         const { type } = req.query;
-        const companyId = req.session.user.company_id;
+        // --- OVERRIDE LOGIC ---
+        let companyId = req.session.user.company_id; // Default to user's own company
+        // If User is CO AND a specific company is requested in URL, override it
+        if (req.session.user.role === 'CO' && req.query.company_id) {
+            companyId = req.query.company_id;
+        }       
+        // ---------------------
 
         if (type === 'stock') {
             // Report 1: Current Stock Status
@@ -2197,7 +2509,14 @@ app.get('/api/ration-report', checkAuth, checkRole(['Company_Ration_Incharge', '
 // GET /kote - Renders the dashboard
 app.get("/kote", checkAuth, checkRole(['Company_Weapon_Incharge', 'CO']), setNoCache, async (req, res) => {
     try {
-        const companyId = req.session.user.company_id;
+        // --- OVERRIDE LOGIC ---
+        let companyId = req.session.user.company_id; // Default to user's own company
+        // If User is CO AND a specific company is requested in URL, override it
+        if (req.session.user.role === 'CO' && req.query.company_id) {
+            companyId = req.query.company_id;
+        }       
+        // ---------------------
+
         const [company] = await pool.query("SELECT company_name FROM Companies WHERE company_id = ?", [companyId]);
         
         // 1. Get all weapons for THIS company
@@ -2262,6 +2581,7 @@ app.get("/kote", checkAuth, checkRole(['Company_Weapon_Incharge', 'CO']), setNoC
 
         res.render("kote", {
             user: req.session.user,
+            viewedCompanyId: companyId,
             companyName: company[0].company_name,
             weapons: weapons,
             ledger: ledger,
@@ -2281,65 +2601,109 @@ app.get("/kote", checkAuth, checkRole(['Company_Weapon_Incharge', 'CO']), setNoC
 });
 // POST /kote/allocate - Handles the "Issue Weapon" form
 app.post('/kote/allocate', checkAuth, checkRole(['Company_Weapon_Incharge', 'CO']), async (req, res) => {
-    const { weapon_id, soldier_id } = req.body;
+
+    // 1. Extract redirect_company_id along with other data
+    const { weapon_id, soldier_id, redirect_company_id } = req.body;
     const authorizerId = req.session.user.id;
+
+    // 2. Determine the Redirect URL
+    let redirectUrl = '/kote';
+    if (req.session.user.role === 'CO' && redirect_company_id) {
+        redirectUrl += `?company_id=${redirect_company_id}`;
+    }
+    const separator = redirectUrl.includes('?') ? '&' : '?';
 
     try {
         // Call the stored procedure for allocation
         await pool.execute('CALL sp_AllocateWeaponToSoldier(?, ?, ?)', [weapon_id, soldier_id, authorizerId]);
-        res.redirect('/kote?success=Weapon allocated successfully!');
+        // 3. Dynamic Redirect (Success)
+        res.redirect(`${redirectUrl}${separator}success=Weapon allocated successfully!`);
     } catch (error) {
         console.error("Error allocating weapon:", error);
-        res.redirect('/kote?error=' + encodeURIComponent(error.sqlMessage || error.message));
+        // 4. Dynamic Redirect (Error)
+        res.redirect(`${redirectUrl}${separator}error=${encodeURIComponent(error.sqlMessage || error.message)}`);
     }
 });
 
 // POST /kote/assign - Handles the "Assign Weapon" form
 app.post('/kote/assign', checkAuth, checkRole(['Company_Weapon_Incharge', 'CO']), async (req, res) => {
-    const { weapon_id, soldier_id } = req.body;
+    const { weapon_id, soldier_id, redirect_company_id } = req.body;
     const authorizerId = req.session.user.id;
+    // --- Redirect Logic ---
+    let redirectUrl = '/kote';
+    if (req.session.user.role === 'CO' && redirect_company_id) {
+        redirectUrl += `?company_id=${redirect_company_id}`;
+    }
+    const separator = redirectUrl.includes('?') ? '&' : '?';
+    // ----------------------
 
     try {
         // Call the stored procedure for assignment
         await pool.execute('CALL sp_AssignWeaponToSoldier(?, ?, ?)', [soldier_id, weapon_id, authorizerId]);
-        res.redirect('/kote?success=Weapon formally assigned successfully!');
+        res.redirect(`${redirectUrl}${separator}success=Weapon formally assigned successfully!`);
     } catch (error) {
         console.error("Error assigning weapon:", error);
-        res.redirect('/kote?error=' + encodeURIComponent(error.sqlMessage || error.message));
+        res.redirect(`${redirectUrl}${separator}error=${encodeURIComponent(error.sqlMessage || error.message)}`);
     }
 });
 
 // POST /kote/return - Handles the "Return Weapon" form
 app.post('/kote/return', checkAuth, checkRole(['Company_Weapon_Incharge', 'CO']), async (req, res) => {
-    const { weapon_id } = req.body;
+    const { weapon_id, redirect_company_id } = req.body;
     const authorizerId = req.session.user.id;
+
+    // --- Redirect Logic ---
+    let redirectUrl = '/kote';
+    if (req.session.user.role === 'CO' && redirect_company_id) {
+        redirectUrl += `?company_id=${redirect_company_id}`;
+    }
+    const separator = redirectUrl.includes('?') ? '&' : '?';
+    // ----------------------
+
 
     try {
         await pool.execute('CALL sp_ReturnWeapon(?, ?)', [weapon_id, authorizerId]);
-        res.redirect('/kote?success=Weapon returned to kote successfully!');
+        res.redirect(`${redirectUrl}${separator}success=Weapon returned to kote successfully!`);
     } catch (error) {
         console.error("Error returning weapon:", error);
-        res.redirect('/kote?error=' + encodeURIComponent(error.sqlMessage || error.message));
+        res.redirect(`${redirectUrl}${separator}error=${encodeURIComponent(error.sqlMessage || error.message)}`);
     }
 });
 
 // POST /kote/deassign - Handles the "De-assign Weapon" form
 app.post('/kote/deassign', checkAuth, checkRole(['Company_Weapon_Incharge', 'CO']), async (req, res) => {
-    const { weapon_id } = req.body;
+    const { weapon_id, redirect_company_id } = req.body;
     const authorizerId = req.session.user.id;
+
+    // --- Redirect Logic ---
+    let redirectUrl = '/kote';
+    if (req.session.user.role === 'CO' && redirect_company_id) {
+        redirectUrl += `?company_id=${redirect_company_id}`;
+    }
+    const separator = redirectUrl.includes('?') ? '&' : '?';
+    // ----------------------
 
     try {
         await pool.execute('CALL sp_DeassignWeapon(?, ?)', [weapon_id, authorizerId]);
-        res.redirect('/kote?success=Weapon formally de-assigned successfully!');
+        res.redirect(`${redirectUrl}${separator}success=Weapon formally de-assigned successfully!`);
     } catch (error) {
         console.error("Error de-assigning weapon:", error);
-        res.redirect('/kote?error=' + encodeURIComponent(error.sqlMessage || error.message));
+        res.redirect(`${redirectUrl}${separator}error=${encodeURIComponent(error.sqlMessage || error.message)}`);
     }
 });
 
 // GET /kote/deassign/:weapon_id - Handles the "De-assign" link
 app.get('/kote/deassign/:weapon_id', checkAuth, checkRole(['Company_Weapon_Incharge', 'CO']), async (req, res) => {
+    // --- OVERRIDE LOGIC ---
+        let companyId = req.session.user.company_id; // Default to user's own company
+        // If User is CO AND a specific company is requested in URL, override it
+        if (req.session.user.role === 'CO' && req.query.company_id) {
+            companyId = req.query.company_id;
+        }       
+        // ---------------------
+    
     const { weapon_id } = req.params;
+
     const authorizerId = req.session.user.id;
 
     try {
@@ -2356,7 +2720,16 @@ app.get('/kote/deassign/:weapon_id', checkAuth, checkRole(['Company_Weapon_Incha
 app.post('/kote/update-maintenance/:id', checkAuth, checkRole(['Company_Weapon_Incharge', 'CO']), async (req, res) => {
     const { id } = req.params;
     // 1. Get the new 'status' field from the form
-    const { last_maintenance, next_maintenance, status } = req.body;
+    const { last_maintenance, next_maintenance, status, redirect_company_id } = req.body;
+
+    // --- Redirect Logic ---
+    let redirectUrl = '/kote';
+    if (req.session.user.role === 'CO' && redirect_company_id) {
+        redirectUrl += `?company_id=${redirect_company_id}`;
+    }
+    const separator = redirectUrl.includes('?') ? '&' : '?';
+    // ----------------------
+
 
     try {
         // 2. Add the `status` = ? to the SQL query
@@ -2364,48 +2737,66 @@ app.post('/kote/update-maintenance/:id', checkAuth, checkRole(['Company_Weapon_I
             'UPDATE Weapons SET last_maintenance = ?, next_maintenance = ?, `status` = ? WHERE weapon_id = ?',
             [last_maintenance || null, next_maintenance || null, status, id]
         );
-        res.redirect('/kote?success=Weapon details updated successfully!');
+        res.redirect(`${redirectUrl}${separator}success=Weapon details updated successfully!`);
     } catch (error) {
         console.error("Error updating weapon maintenance/status:", error);
-        res.redirect('/kote?error=' + encodeURIComponent(error.sqlMessage || 'A server error occurred.'));
+        res.redirect(`${redirectUrl}${separator}error=${encodeURIComponent(error.sqlMessage || 'A server error occurred.')}`);
     }
 });
 
 // POST /kote/issue-ammo - Calls the SP to issue ammo
 app.post('/kote/issue-ammo', checkAuth, checkRole(['Company_Weapon_Incharge', 'CO']), async (req, res) => {
     // 1. Get the new 'transaction_type' from the form
-    const { ammo_id, soldier_id, quantity, transaction_type } = req.body;
+    const { ammo_id, soldier_id, quantity, transaction_type, redirect_company_id } = req.body;
     const authorizerId = req.session.user.id;
-    const companyId = req.session.user.company_id;
-
+    // Note: We must use the redirect_company_id for the LOGIC too, 
+    // so the CO issues ammo from the target company, not HQ.
+    let targetCompanyId = req.session.user.company_id;
+    
+    // 2. Determine URL & Target Company
+    let redirectUrl = '/kote';
+    if (req.session.user.role === 'CO' && redirect_company_id) {
+        redirectUrl += `?company_id=${redirect_company_id}`;
+        targetCompanyId = redirect_company_id; // <--- IMPORTANT: Use this for the DB call
+    }
+    const separator = redirectUrl.includes('?') ? '&' : '?';
     try {
         // 2. Pass it as the 6th parameter to the stored procedure
         await pool.execute(
             'CALL sp_IssueAmmoToSoldier(?, ?, ?, ?, ?, ?)',
-            [ammo_id, soldier_id, quantity, authorizerId, companyId, transaction_type]
+            [ammo_id, soldier_id, quantity, authorizerId,  targetCompanyId, transaction_type]
         );
-        res.redirect('/kote?success=Ammunition issued successfully!');
+        res.redirect(`${redirectUrl}${separator}success=Ammunition issued successfully!`);
     } catch (error) {
         console.error("Error issuing ammo:", error);
-        res.redirect('/kote?error=' + encodeURIComponent(error.sqlMessage || error.message));
+        res.redirect(`${redirectUrl}${separator}error=` + encodeURIComponent(error.sqlMessage || error.message));
     }
 });
 // POST /kote/return-ammo - Calls the SP to return ammo
 app.post('/kote/return-ammo', checkAuth, checkRole(['Company_Weapon_Incharge', 'CO']), async (req, res) => {
-    const { ammo_type, lot_number, quantity, soldier_id } = req.body;
+    const { ammo_type, lot_number, quantity, soldier_id, redirect_company_id } = req.body;
     const authorizerId = req.session.user.id;
-    const companyId = req.session.user.company_id;
-
+    // Note: We must use the redirect_company_id for the LOGIC too, 
+    // so the CO issues ammo from the target company, not HQ.
+    let targetCompanyId = req.session.user.company_id;
+    
+    // 2. Determine URL & Target Company
+    let redirectUrl = '/kote';
+    if (req.session.user.role === 'CO' && redirect_company_id) {
+        redirectUrl += `?company_id=${redirect_company_id}`;
+        targetCompanyId = redirect_company_id; // <--- IMPORTANT: Use this for the DB call
+    }
+    const separator = redirectUrl.includes('?') ? '&' : '?';
     try {
         // Call the new stored procedure
         await pool.execute(
             'CALL sp_ReturnAmmoFromSoldier(?, ?, ?, ?, ?, ?)',
-            [ammo_type, lot_number, quantity, soldier_id, authorizerId, companyId]
+            [ammo_type, lot_number, quantity, soldier_id, authorizerId, targetCompanyId]
         );
-        res.redirect('/kote?success=Ammunition returned to store!');
+        res.redirect(`${redirectUrl}${separator}success=Ammunition returned to store!`);
     } catch (error) {
         console.error("Error returning ammo:", error);
-        res.redirect('/kote?error=' + encodeURIComponent(error.sqlMessage || error.message));
+        res.redirect(`${redirectUrl}${separator}error=` + encodeURIComponent(error.sqlMessage || error.message));
     }
 });
 // --- API ROUTE for the Weapon Ledger Search ---
@@ -2413,7 +2804,13 @@ app.get('/api/kote/search-weapon-ledger', checkAuth, checkRole(['Company_Weapon_
     try {
         const searchTerm = req.query.term || '';
         const searchPattern = `%${searchTerm}%`;
-        const companyId = req.session.user.company_id;
+        // --- OVERRIDE LOGIC ---
+        let companyId = req.session.user.company_id; // Default to user's own company
+        // If User is CO AND a specific company is requested in URL, override it
+        if (req.session.user.role === 'CO' && req.query.company_id) {
+            companyId = req.query.company_id;
+        }       
+        // ---------------------
 
         const [rows] = await pool.query(
             `SELECT w.serial_number, s.name, 
@@ -2439,7 +2836,13 @@ app.get('/api/kote/search-ammo-log', checkAuth, checkRole(['Company_Weapon_Incha
     try {
         const searchTerm = req.query.term || '';
         const searchPattern = `%${searchTerm}%`;
-        const companyId = req.session.user.company_id;
+        // --- OVERRIDE LOGIC ---
+        let companyId = req.session.user.company_id; // Default to user's own company
+        // If User is CO AND a specific company is requested in URL, override it
+        if (req.session.user.role === 'CO' && req.query.company_id) {
+            companyId = req.query.company_id;
+        }       
+        // ---------------------
 
         const [rows] = await pool.query(
             `SELECT l.log_id, a.ammo_type, a.lot_number, s.name AS soldier_name, l.quantity_change, 
@@ -2464,7 +2867,13 @@ app.get('/api/kote/search-assignments', checkAuth, checkRole(['Company_Weapon_In
     try {
         const searchTerm = req.query.term || '';
         const searchPattern = `%${searchTerm}%`;
-        const companyId = req.session.user.company_id;
+        // --- OVERRIDE LOGIC ---
+        let companyId = req.session.user.company_id; // Default to user's own company
+        // If User is CO AND a specific company is requested in URL, override it
+        if (req.session.user.role === 'CO' && req.query.company_id) {
+            companyId = req.query.company_id;
+        }       
+        // ---------------------
 
         const [rows] = await pool.query(
             `SELECT swa.weapon_id, w.serial_number, s.name, s.rank
