@@ -113,3 +113,16 @@ git init
 git add .
 git commit -m "Initial commit: ArmouryNet functional build"
 ```
+
+## 👥 Team: Charlie Squad
+
+**Project Developers**
+
+<table>
+  <tr>
+    <td align="center"><a href="https://github.com/Astic-x"><img src="https://github.com/Astic-x.png" width="100px;" alt=""/><br /><sub><b>Ankush Malik</b></sub></a></td>
+    <td align="center"><a href="https://github.com/vishalsingh21xyz"><img src="https://github.com/vishalsingh21xyz.png" width="100px;" alt=""/><br /><sub><b>Vishal Vijay Singh</b></sub></a></td>
+    <td align="center"><a href="https://github.com/SIDHARTH-PUNDIR"><img src="https://github.com/SIDHARTH-PUNDIR.png" width="100px;" alt=""/><br /><sub><b>Sidharth Pundir</b></sub></a></td>
+    <td align="center"><a href="https://github.com/akshatbansal13"><img src="https://github.com/akshatbansal13.png" width="100px;" alt=""/><br /><sub><b>Akshat Bansal</b></sub></a></td>
+  </tr>
+</table>
